@@ -1,0 +1,38 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+
+  // Sensible defaults: dependency dashboard issue, rate limiting, and the
+  // standard managers. For this repo that means pyproject.toml + uv.lock
+  // (the entire toolchain, since all pre-commit hooks run from uv.lock-pinned
+  // tools) and the GitHub Actions workflow.
+  extends: ['config:recommended'],
+
+  // Conventional-commit messages (chore(deps): ...), so Renovate's commits
+  // flow through `cz bump` and the changelog like any other. Renovate can
+  // autodetect this from history, but the repo has no history yet, so state
+  // it explicitly.
+  semanticCommits: 'enabled',
+
+  // Batch update PRs into a weekly window instead of trickling in as
+  // releases happen. Times are UTC unless a `timezone` option is added.
+  schedule: ['before 6am on monday'],
+
+  // On a solo project, one PR for all minor and patch bumps keeps the noise
+  // down; majors stay as individual PRs since they can need real attention.
+  packageRules: [
+    {
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'non-major dependencies',
+    },
+  ],
+
+  // Periodically refresh uv.lock so transitive dependencies move even when
+  // no version bound in pyproject.toml has changed.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ['before 6am on the first day of the month'],
+  },
+
+  // Deliberately not enabled: the git-submodules manager. The entharion
+  // submodule is reference material, updated manually per the README.
+}
