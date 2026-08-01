@@ -7,6 +7,11 @@
   // tools) and the GitHub Actions workflow.
   extends: ['config:recommended'],
 
+  // No persistent "Dependency Dashboard" issue. With few dependencies and a
+  // slow schedule, updates rarely queue invisibly, so PRs alone are enough
+  // signal — and the issue board stays clear for actual work.
+  dependencyDashboard: false,
+
   // Conventional-commit messages (chore(deps): ...), so Renovate's commits
   // flow through `cz bump` and the changelog like any other. Renovate can
   // autodetect this from history, but the repo has no history yet, so state
@@ -23,6 +28,17 @@
     {
       matchUpdateTypes: ['minor', 'patch'],
       groupName: 'non-major dependencies',
+    },
+
+    // Python itself is not routine: each annual 3.x release is effectively a
+    // major upgrade despite the version arithmetic saying "minor". Pull it
+    // back out of the non-major group (later rules win) so it arrives as its
+    // own PR, titled "update Python ..." rather than "update python docker
+    // tag" — the docker wording comes from Renovate's version lookup source.
+    {
+      matchManagers: ['pyenv'],
+      groupName: null,
+      commitMessageTopic: 'Python',
     },
   ],
 
