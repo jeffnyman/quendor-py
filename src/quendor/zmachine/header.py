@@ -26,8 +26,23 @@ STATIC_STRINGS_OFFSET: Final = 0x2A
 """Six characters of ASCII; from V3 the compilation date as YYMMDD (§ 11.1)."""
 SERIAL_LENGTH: Final = 6
 
+"""Quendor targets the full range the Z-Machine defines (§ 11.1)."""
+SUPPORTED_VERSIONS: Final = frozenset(range(1, 9))
+
 """The stored file length is divided by this to fit a word (§ 11.1.6)."""
 _FILE_LENGTH_SCALE: Final = {1: 2, 2: 2, 3: 2, 4: 4, 5: 4, 6: 8, 7: 8, 8: 8}
+
+"""Maximum permitted story file length, by Version (§ 1.1.4)."""
+_MAXIMUM_FILE_SIZE: Final = {
+    1: 128 * 1024,
+    2: 128 * 1024,
+    3: 128 * 1024,
+    4: 256 * 1024,
+    5: 256 * 1024,
+    6: 512 * 1024,
+    7: 512 * 1024,
+    8: 512 * 1024,
+}
 
 
 class Header:
@@ -224,6 +239,11 @@ class Header:
         Only V6 and V7 store routine and string offsets.
         """
         return V6 <= self.version <= V7
+
+    @property
+    def maximum_file_size(self) -> int:
+        """Largest story file this Version permits (§ 1.1.4)."""
+        return _MAXIMUM_FILE_SIZE[self.version]
 
     def unpack_routine_address(self, packed: int) -> int:
         """Convert a packed routine address to a byte address (§ 1.2.3).

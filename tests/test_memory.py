@@ -41,3 +41,17 @@ def test_read_bytes_returns_the_run() -> None:
 def test_negative_length_reads_are_rejected() -> None:
     with pytest.raises(MemoryAccessError):
         Memory(bytes(64)).read_bytes(0, -1)
+
+
+def test_reads_beyond_the_story_are_rejected() -> None:
+    with pytest.raises(MemoryAccessError) as error_info:
+        Memory(bytes(64)).read_byte(64)
+
+    assert_that(str(error_info.value)).contains("outside the 64-byte story file")
+
+
+def test_negative_addresses_do_not_wrap_around() -> None:
+    # Without the bounds check, Python's negative indexing would silently
+    # read the last byte of the file instead of failing.
+    with pytest.raises(MemoryAccessError):
+        Memory(bytes(64)).read_byte(-1)
