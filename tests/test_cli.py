@@ -12,9 +12,9 @@ from quendor.zmachine.versions import V1, V2, V3, V6
 
 
 @pytest.fixture
-def story_path(tmp_path: Path) -> Path:
+def story_path(tmp_path: Path, story_data: Callable[..., bytes]) -> Path:
     path = tmp_path / "sample.z3"
-    path.write_bytes(b"\x03" + b"\x00" * 63)
+    path.write_bytes(story_data(V3))
     return path
 
 

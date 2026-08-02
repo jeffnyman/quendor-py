@@ -45,10 +45,12 @@ class Memory:
             message = f"cannot read {length} bytes"
             raise MemoryAccessError(message)
 
+        self._check_readable(address, length)
         return bytes(self._data[address : address + length])
 
     def read_byte(self, address: int) -> int:
         """Read the byte at a byte address."""
+        self._check_readable(address, 1)
         return self._data[address]
 
     def read_word(self, address: int) -> int:
@@ -56,4 +58,13 @@ class Memory:
 
         Words are stored most-significant byte first (§ 2.1).
         """
+        self._check_readable(address, 2)
         return (self._data[address] << 8) | self._data[address + 1]
+
+    def _check_readable(self, address: int, length: int) -> None:
+        if address < 0 or address + length > len(self._data):
+            message = (
+                f"address ${address:05x} (+{length}) lies outside the "
+                f"{len(self._data)}-byte story file"
+            )
+            raise MemoryAccessError(message)
