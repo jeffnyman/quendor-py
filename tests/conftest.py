@@ -1,6 +1,6 @@
-"""Shared fixtures: synthetic story files shaped per the § 11.1 header."""
+"""Shared fixtures: synthetic story files and Blorbs, shaped per the specs."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import pytest
 
@@ -55,3 +55,37 @@ def make_story_bytes(
 @pytest.fixture
 def story_data() -> Callable[..., bytes]:
     return make_story_bytes
+
+
+def make_blorb_bytes(
+    resources: Sequence[tuple[bytes, bytes, bytes]] = (),
+) -> bytes:
+    """A Blorb holding `resources`, given as (usage, chunk id, body) triples."""
+
+    index_size = 4 + 12 * len(resources)
+    entries = b""
+    chunks = b""
+    position = 12 + 8 + index_size
+
+    for number, (usage, identifier, body) in enumerate(resources):
+        entries += usage + number.to_bytes(4, "big") + position.to_bytes(4, "big")
+
+        chunk = identifier + len(body).to_bytes(4, "big") + body
+
+        if len(body) % 2:
+            chunk += b"\x00"
+
+        chunks += chunk
+        position += len(chunk)
+
+    index = b"RIdx" + index_size.to_bytes(4, "big")
+    index += len(resources).to_bytes(4, "big") + entries
+
+    payload = b"IFRS" + index + chunks
+
+    return b"FORM" + len(payload).to_bytes(4, "big") + payload
+
+
+@pytest.fixture
+def blorb_data() -> Callable[..., bytes]:
+    return make_blorb_bytes

@@ -11,3 +11,7 @@ class StoryFileError(QuendorError):
 
 class MemoryAccessError(QuendorError):
     """A read or write violated the memory map rules of § 1.1."""
+
+
+class BlorbError(QuendorError):
+    """A resource file that cannot be read."""

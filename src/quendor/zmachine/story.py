@@ -4,11 +4,15 @@ A story file is the program the Z-Machine runs: a header followed by the
 tables and code it describes (§ 1.1). This module turns a file on disk into
 `Memory` plus a `Header` view over it, refusing anything the standard says
 cannot be valid.
+
+A modern story may arrive packaged in a Blorb alongside its pictures rather
+than on its own, so loading unwraps one if that is what it is given.
 """
 
 from pathlib import Path
 from typing import Self
 
+from quendor.zmachine.blorb import story_bytes
 from quendor.zmachine.errors import StoryFileError
 from quendor.zmachine.header import SUPPORTED_VERSIONS, Header
 from quendor.zmachine.memory import HEADER_SIZE, Memory
@@ -24,10 +28,14 @@ class Story:
 
     @classmethod
     def from_path(cls, path: Path) -> Self:
-        """Load a story file from disk."""
+        """Load a story file from disk.
+
+        A `.zblorb` is a Blorb package with the story inside it rather than a
+        story file, so the code is unwrapped before it is loaded (Blorb § 5).
+        """
 
         try:
-            data = path.read_bytes()
+            data = story_bytes(path)
         except OSError as error:
             message = f"could not read story file {path}: {error}"
             raise StoryFileError(message) from error
