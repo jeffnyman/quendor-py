@@ -97,6 +97,7 @@ select = [
 # inconsistent and implicit returns) and drop the stylistic half below.
 ignore = [
     "D107",    # Missing docstring in `__init__`
+    "D105",    # Missing docstring in magic method
     "D202",    # No blank lines allowed after function docstring
     "RET504",  # unnecessary-assign        — a named result before `return` documents
                #                             the value and gives debuggers a line to
@@ -113,6 +114,8 @@ ignore = [
 "tests/**" = [
     "S101",     # assert is the whole point of a test
     "PLR2004",  # magic values are legitimate as test expectations
+    "PLR0913",  # the story builder takes one keyword per header field, which
+                # is the readable shape for a fixture mirroring § 11.1
     "D",        # test names already say what is being verified
 ]
 
