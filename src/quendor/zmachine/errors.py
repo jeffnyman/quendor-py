@@ -7,3 +7,7 @@ class QuendorError(Exception):
 
 class StoryFileError(QuendorError):
     """A story file is malformed, truncated, or otherwise unusable."""
+
+
+class MemoryAccessError(QuendorError):
+    """A read or write violated the memory map rules of § 1.1."""

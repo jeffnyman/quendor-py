@@ -1,5 +1,6 @@
 import runpy
 import sys
+from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 from assertpy import assert_that
 
 from quendor.cli import main
+from quendor.zmachine.versions import V1, V2, V3, V6
 
 
 @pytest.fixture
@@ -66,3 +68,114 @@ def test_unknown_argument_is_rejected() -> None:
         main(["--not-a-real-option"])
 
     assert_that(exit_info.value.code).is_equal_to(2)
+
+
+def _header_report(
+    data: bytes,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> str:
+    path = tmp_path / "story.z"
+    path.write_bytes(data)
+
+    exit_code = main([str(path), "--header"])
+
+    assert_that(exit_code).is_equal_to(0)
+
+    return capsys.readouterr().out
+
+
+def test_header_report_for_a_v3_story(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = _header_report(
+        story_data(
+            V3,
+            serial=b"840809",
+            flags_1=0b10,
+            file_length_words=760,
+            checksum=0xA5A0,
+            high_memory_base=0x0300,
+        ),
+        tmp_path,
+        capsys,
+    )
+
+    assert_that(report).contains("  Version           3")
+    assert_that(report).contains("  Serial            840809 (YYMMDD)")
+    assert_that(report).contains("  File length       1520 bytes, 16 bytes of padding")
+    assert_that(report).contains("  Checksum          $a5a0")
+    assert_that(report).contains("status line shows hours:mins")
+    assert_that(report).contains("high memory overlaps static memory, which is legal")
+    assert_that(report).contains("  Abbreviations     $001c0")
+    assert_that(report).contains("  Initial PC        $00500")
+
+
+def test_header_report_for_a_v1_story(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = _header_report(story_data(V1, serial=b"AS000C"), tmp_path, capsys)
+
+    assert_that(report).contains(
+        "  Serial            AS000C (V1: field officially unset; § 11.1)"
+    )
+    assert_that(report).contains(
+        "  File length       not recorded (file is 1536 bytes)"
+    )
+    assert_that(report).does_not_contain("Checksum")
+    assert_that(report).does_not_contain("Abbreviations")
+
+
+def test_header_report_for_a_v2_story(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = _header_report(story_data(V2, serial=b"UG3AU5"), tmp_path, capsys)
+
+    assert_that(report).contains("  Serial            UG3AU5\n")
+
+
+def test_header_report_for_a_v6_story(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = _header_report(
+        story_data(
+            V6,
+            initial_pc=0x0100,
+            routines_offset=0x0010,
+            static_strings_offset=0x0020,
+            file_length_words=192,
+            checksum=0x1234,
+            flags_2=0b1000,
+            high_memory_base=0x0600,
+        ),
+        tmp_path,
+        capsys,
+    )
+
+    assert_that(report).contains("  File length       1536 bytes\n")
+    assert_that(report).contains("game wants to use pictures")
+    assert_that(report).does_not_contain("Serial")
+    assert_that(report).does_not_contain("overlaps")
+    assert_that(report).contains("  Initial routine   $0100 packed -> $00480")
+    assert_that(report).contains("  Routines offset   $0010")
+    assert_that(report).contains("  Strings offset    $0020")
+
+
+def test_header_report_flags_an_illegal_memory_layout(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    report = _header_report(story_data(V3, high_memory_base=0x0100), tmp_path, capsys)
+
+    assert_that(report).contains(
+        "high memory overlaps dynamic memory, which is illegal"
+    )
