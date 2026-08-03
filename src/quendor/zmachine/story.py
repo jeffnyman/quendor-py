@@ -15,7 +15,7 @@ from typing import Self
 from quendor.zmachine.blorb import story_bytes
 from quendor.zmachine.errors import StoryFileError
 from quendor.zmachine.header import SUPPORTED_VERSIONS, Header
-from quendor.zmachine.memory import HEADER_SIZE, Memory
+from quendor.zmachine.memory import Memory
 
 
 class Story:
@@ -73,27 +73,5 @@ class Story:
             message = (
                 f"header records a length of {file_length} bytes but the file "
                 f"holds {size}; it looks truncated (§ 11.1.6)"
-            )
-            raise StoryFileError(message)
-
-        # Dynamic memory runs from 0 to the byte before static memory, holds
-        # the header, and must physically exist in the file (§ 1.1). Its base
-        # is the only free variable in the famous 64K dynamic-plus-static
-        # ceiling, which is otherwise capped by definition.
-        static_base = self.header.static_memory_base
-
-        if static_base < HEADER_SIZE:
-            message = (
-                f"static memory begins at ${static_base:05x}, inside the "
-                f"{HEADER_SIZE}-byte header; dynamic memory must contain "
-                f"at least {HEADER_SIZE} bytes (§ 1.1)"
-            )
-            raise StoryFileError(message)
-
-        if static_base > size:
-            message = (
-                f"static memory begins at ${static_base:05x} but the file "
-                f"ends at ${size - 1:05x}; dynamic memory cannot extend "
-                f"past the end of the file (§ 1.1)"
             )
             raise StoryFileError(message)

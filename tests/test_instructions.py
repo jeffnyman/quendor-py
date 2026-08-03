@@ -10,7 +10,12 @@ CODE = 0x40
 
 
 def decode(raw: bytes, version: int = V3) -> Instruction:
-    memory = Memory(bytes(CODE) + raw)
+    # Static memory opens right after the header, making the zeroed header
+    # a legal story under the § 1.1 checks Memory runs at construction.
+    header = bytearray(CODE)
+    header[0x0E:0x10] = CODE.to_bytes(2, "big")
+
+    memory = Memory(bytes(header) + raw)
     return Decoder(memory, version).decode(CODE)
 
 

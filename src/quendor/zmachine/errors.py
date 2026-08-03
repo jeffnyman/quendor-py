@@ -32,3 +32,7 @@ class IllegalOpcodeError(QuendorError):
     than something to skip past: an opcode Quendor does not recognise means
     it has almost certainly lost its place in the instruction stream.
     """
+
+
+class UnimplementedOpcodeError(QuendorError):
+    """An opcode Quendor decodes but cannot yet execute."""
