@@ -101,6 +101,21 @@ def test_abbreviations_address_from_v2(story_data: Callable[..., bytes]) -> None
     assert_that(header.abbreviations_address).is_equal_to(0x01C0)
 
 
+def test_short_extension_table_reads_as_zero(
+    story_data: Callable[..., bytes],
+) -> None:
+    # § 11.1.7.1: reading past the end of the extension table gives 0. The
+    # Unicode table address is word 3; this table only has 2.
+    data = bytearray(story_data(5))
+    data[0x36:0x38] = (0x0320).to_bytes(2, "big")
+    data[0x0320:0x0322] = (2).to_bytes(2, "big")
+
+    header = Story(bytes(data)).header
+
+    assert_that(header.extension_table_address).is_equal_to(0x0320)
+    assert_that(header.unicode_translation_table_address).is_equal_to(0)
+
+
 def test_only_v6_has_a_main_routine(story_data: Callable[..., bytes]) -> None:
     assert_that(Story(story_data(V6)).header.has_main_routine).is_true()
     assert_that(Story(story_data(V5)).header.has_main_routine).is_false()

@@ -7,7 +7,15 @@ from pathlib import Path
 import pytest
 from assertpy import assert_that
 
-from quendor.cli import main
+from quendor.cli import (
+    first_instruction_address,
+    format_operand,
+    format_string,
+    format_variable,
+    main,
+)
+from quendor.zmachine.instructions import Operand, OperandType
+from quendor.zmachine.story import Story
 from quendor.zmachine.versions import V1, V2, V3, V6
 
 
@@ -179,3 +187,156 @@ def test_header_report_flags_an_illegal_memory_layout(
     assert_that(report).contains(
         "high memory overlaps dynamic memory, which is illegal"
     )
+
+
+def test_format_variable_names_all_three_kinds() -> None:
+    assert_that(format_variable(0x00)).is_equal_to("sp")
+    assert_that(format_variable(0x01)).is_equal_to("L00")
+    assert_that(format_variable(0x0F)).is_equal_to("L0e")
+    assert_that(format_variable(0x10)).is_equal_to("G00")
+    assert_that(format_variable(0xFF)).is_equal_to("Gef")
+
+
+def test_format_operand_shapes() -> None:
+    variable = Operand(OperandType.VARIABLE, 1)
+    large = Operand(OperandType.LARGE_CONSTANT, 0x1234)
+    small = Operand(OperandType.SMALL_CONSTANT, 5)
+
+    assert_that(format_operand(variable)).is_equal_to("L00")
+    assert_that(format_operand(large)).is_equal_to("#1234")
+    assert_that(format_operand(small)).is_equal_to("#05")
+
+
+def test_format_string_escapes_for_one_line() -> None:
+    assert_that(format_string('a"b\nc\\d')).is_equal_to('"a\\"b\\nc\\\\d"')
+
+
+def test_first_instruction_address(story_data: Callable[..., bytes]) -> None:
+    v3 = Story(story_data(V3))
+
+    assert_that(first_instruction_address(v3)).is_equal_to(0x0500)
+
+    # The V6 main routine sits at 4P + 8R_O = $0480; one more byte skips
+    # its local-count header (§ 5.2).
+    v6 = Story(story_data(V6, initial_pc=0x0100, routines_offset=0x10))
+
+    assert_that(first_instruction_address(v6)).is_equal_to(0x0481)
+
+
+def _with_code(
+    story_data: Callable[..., bytes],
+    code: bytes,
+    version: int = V3,
+) -> bytes:
+    data = bytearray(story_data(version))
+    data[0x0500 : 0x0500 + len(code)] = code
+
+    return bytes(data)
+
+
+def _disassembly(
+    data: bytes,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    *arguments: str,
+) -> str:
+    path = tmp_path / "story.z3"
+    path.write_bytes(data)
+
+    exit_code = main([str(path), "--disassemble", *arguments])
+
+    assert_that(exit_code).is_equal_to(0)
+
+    return capsys.readouterr().out
+
+
+def test_disassembly_lists_instructions(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    program = (
+        bytes([0x14, 0x05, 0x0A, 0x00])  # add #05,#0a -> sp
+        + bytes([0x90, 0x2A, 0xC5])  # jz #2a [TRUE] $0050a
+        + bytes([0xB2, 0xB5, 0xC5])  # print "hi"
+        + bytes([0xB0])  # rtrue
+    )
+
+    out = _disassembly(_with_code(story_data, program), tmp_path, capsys)
+
+    assert_that(out).contains("$00500:  14 05 0a 00")
+    assert_that(out).contains("ADD")
+    assert_that(out).contains("#05,#0a")
+    assert_that(out).contains("-> sp")
+    assert_that(out).contains("[TRUE] $0050a")
+    assert_that(out).contains('"hi"')
+    assert_that(out).contains("RTRUE")
+
+    # The zeroes after the program are not an opcode; the listing ends
+    # with the error inline rather than discarding what decoded.
+    assert_that(out).contains("not an opcode")
+
+
+def test_disassembly_shows_return_branches(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    program = bytes([0x90, 0x00, 0xC0])
+
+    out = _disassembly(
+        _with_code(story_data, program), tmp_path, capsys, "--count", "1"
+    )
+
+    assert_that(out).contains("[TRUE] RFALSE")
+
+
+def test_disassembly_flags_early_opcodes(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    program = bytes([0xBF, 0xC0])  # piracy, V5-only, in a V3 story
+
+    out = _disassembly(
+        _with_code(story_data, program), tmp_path, capsys, "--count", "1"
+    )
+
+    assert_that(out).contains("PIRACY")
+    assert_that(out).contains("! opcode postdates this Version (§ 14.2)")
+
+
+def test_disassembly_start_address_is_hex(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    program = bytes([0x14, 0x05, 0x0A, 0x00, 0xB0])
+
+    out = _disassembly(
+        _with_code(story_data, program),
+        tmp_path,
+        capsys,
+        "--start",
+        "504",
+        "--count",
+        "1",
+    )
+
+    assert_that(out).contains("$00504")
+    assert_that(out).does_not_contain("ADD")
+
+
+def test_header_and_disassembly_combine(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    program = bytes([0xB0])
+
+    out = _disassembly(
+        _with_code(story_data, program), tmp_path, capsys, "--header", "--count", "1"
+    )
+
+    assert_that(out).contains("Header Info for:")
+    assert_that(out).contains("RTRUE")

@@ -22,6 +22,11 @@ FILE_LENGTH: Final = 0x1A
 CHECKSUM: Final = 0x1C
 ROUTINES_OFFSET: Final = 0x28
 STATIC_STRINGS_OFFSET: Final = 0x2A
+ALPHABET_TABLE: Final = 0x34
+EXTENSION_TABLE: Final = 0x36
+
+"""Word 3 of the header extension holds the Unicode table address (§ 11.1.7.3)."""
+UNICODE_TABLE_EXTENSION_WORD: Final = 3
 
 """Six characters of ASCII; from V3 the compilation date as YYMMDD (§ 11.1)."""
 SERIAL_LENGTH: Final = 6
@@ -202,6 +207,36 @@ class Header:
         return self._memory.read_word(ABBREVIATIONS)
 
     @property
+    def alphabet_table_address(self) -> int:
+        """Byte address of a story-specific alphabet table, or 0 (§ 3.5.5).
+
+        Only consulted from V5; earlier Versions always use the built-in
+        alphabets of § 3.5.3.
+        """
+        if self.version < V5:
+            return 0
+
+        return self._memory.read_word(ALPHABET_TABLE)
+
+    @property
+    def unicode_translation_table_address(self) -> int:
+        """Byte address of the Unicode translation table, or 0 (§ 3.8.5.2).
+
+        Word 3 of the header extension. Absent or zero means the default
+        table of § 3.8.5.3 applies, which is always the case before V5.
+        """
+        return self._extension_word(UNICODE_TABLE_EXTENSION_WORD)
+
+    @property
+    def extension_table_address(self) -> int:
+        """Byte address of the header extension table, or 0 (§ 11.1.7)."""
+
+        if self.version < V5:
+            return 0
+
+        return self._memory.read_word(EXTENSION_TABLE)
+
+    @property
     def initial_program_counter(self) -> int:
         """Where execution begins.
 
@@ -268,3 +303,23 @@ class Header:
             return 4 * packed + 8 * offset
 
         return 8 * packed
+
+    def _extension_word(self, index: int) -> int:
+        """Read a word from the header extension table (§ 11.1.7).
+
+        Word 0 holds the number of words that follow. Reading past the end of
+        the table, or from a table that does not exist, gives 0 (§ 11.1.7.1)
+        rather than being an error.
+        """
+
+        address = self.extension_table_address
+
+        if address == 0 or index < 1:
+            return 0
+
+        length = self._memory.read_word(address)
+
+        if index > length:
+            return 0
+
+        return self._memory.read_word(address + 2 * index)

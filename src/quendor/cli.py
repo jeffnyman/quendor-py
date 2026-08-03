@@ -9,10 +9,18 @@ from pathlib import Path
 from quendor.zmachine.errors import QuendorError
 from quendor.zmachine.flags import describe_flags_1, describe_flags_2
 from quendor.zmachine.header import Header
+from quendor.zmachine.instructions import Decoder, Instruction, Operand, OperandType
 from quendor.zmachine.story import Story
+from quendor.zmachine.text import TextCodec
+from quendor.zmachine.versions import V6
 
 PROGRAM_NAME = "quendor"
 DESCRIPTION = "A Z-Machine emulator and interpreter."
+
+# Variable numbers partition at $0f: $00 is the stack, $01 to $0f the
+# current routine's locals, and $10 to $ff the globals (§ 4.2.2).
+LAST_LOCAL_VARIABLE = 0x0F
+FIRST_GLOBAL_VARIABLE = 0x10
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +34,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("story", type=Path, help="path to a Z-Machine story file")
     parser.add_argument(
         "--header", action="store_true", help="display the story file's header and exit"
+    )
+    parser.add_argument(
+        "--disassemble", action="store_true", help="decode instructions from story file"
+    )
+    parser.add_argument(
+        "--start",
+        type=lambda value: int(value, 16),
+        metavar="ADDR",
+        help="hex byte address to disassemble from",
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=16,
+        metavar="N",
+        help="number of instructions to disassemble (default: 16)",
     )
 
     return parser
@@ -53,6 +77,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.header:
         print(display_header(story, arguments.story))
 
+    if arguments.disassemble:
+        if arguments.header:
+            print()
+
+        start = arguments.start
+
+        if start is None:
+            start = first_instruction_address(story)
+
+        print(format_disassembly(story, start, arguments.count))
+
     return 0
 
 
@@ -76,6 +111,125 @@ def display_header(story: Story, path: Path) -> str:
     lines += _execution_section(header)
 
     return "\n".join(lines)
+
+
+def first_instruction_address(story: Story) -> int:
+    """Where execution begins (§ 11.1).
+
+    In most Versions the header holds a byte address pointing straight at an
+    instruction. Version 6 instead holds the packed address of a "main"
+    routine, and a routine begins with a header rather than with code: one
+    byte giving the local variable count, followed in V1-4 by two bytes of
+    initial value per local (§ 5.2). V6 is past that, so one byte is enough.
+    """
+
+    header = story.header
+
+    if header.version != V6:
+        return header.initial_program_counter
+
+    routine = header.unpack_routine_address(header.initial_program_counter)
+
+    return routine + 1
+
+
+def format_disassembly(story: Story, start: int, count: int) -> str:
+    """Disassemble `count` instructions starting at `start`, one per line.
+
+    Each line shows the address, the raw bytes, and the decoded instruction,
+    in roughly txd's layout. A decoding failure ends the listing with the
+    error inline, keeping everything already decoded on screen.
+    """
+
+    lines = []
+    address = start
+
+    decoder = Decoder(story.memory, story.header.version)
+    text = TextCodec(story.memory, story.header)
+
+    for _ in range(count):
+        try:
+            instruction = decoder.decode(address)
+        except QuendorError as error:
+            lines.append(f"${address:05x}:  <{error}>")
+            break
+
+        raw = story.memory.read_bytes(instruction.address, instruction.length)
+
+        lines.append(
+            f"${address:05x}:  {raw.hex(' '):<24}"
+            f"  {format_instruction(instruction, text)}"
+        )
+
+        address = instruction.next_address
+
+    return "\n".join(lines)
+
+
+def format_instruction(instruction: Instruction, text: TextCodec) -> str:
+    """One line of disassembly: mnemonic, operands, store, branch, text."""
+
+    parts = [instruction.name.upper().ljust(16)]
+
+    if instruction.operands:
+        parts.append(",".join(format_operand(o) for o in instruction.operands))
+
+    if instruction.store is not None:
+        parts.append(f"-> {format_variable(instruction.store)}")
+
+    if instruction.branch is not None:
+        condition = "TRUE" if instruction.branch.on_true else "FALSE"
+        target = instruction.branch_target
+
+        if target is None:
+            # Offsets 0 and 1 return instead of jumping (§ 4.7.1).
+            destination = "RFALSE" if instruction.branch.returns_false else "RTRUE"
+        else:
+            destination = f"${target:05x}"
+
+        parts.append(f"[{condition}] {destination}")
+
+    if instruction.text is not None:
+        # § 4.8 inline text, decoded through § 3.
+        parts.append(format_string(text.decode_bytes(instruction.text)))
+
+    if instruction.out_of_version:
+        parts.append("  ! opcode postdates this Version (§ 14.2)")
+
+    return " ".join(parts).rstrip()
+
+
+def format_string(text: str) -> str:
+    """Render decoded text on one line, so a disassembly stays scannable."""
+
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    return f'"{escaped}"'
+
+
+def format_operand(operand: Operand) -> str:
+    """Render an operand: constants as `#hex`, variables by name."""
+
+    if operand.type is OperandType.VARIABLE:
+        return format_variable(operand.value)
+    if operand.type is OperandType.LARGE_CONSTANT:
+        return f"#{operand.value:04x}"
+
+    return f"#{operand.value:02x}"
+
+
+def format_variable(number: int) -> str:
+    """Name a variable by number (§ 4.2.2).
+
+    Locals and globals are numbered from 0 here, matching txd's output, so
+    that disassemblies can be compared side by side (§ 14, Remarks).
+    """
+
+    if number == 0:
+        return "sp"
+    if number <= LAST_LOCAL_VARIABLE:
+        return f"L{number - 1:02x}"
+
+    return f"G{number - FIRST_GLOBAL_VARIABLE:02x}"
 
 
 def _story_section(header: Header, size: int) -> list[str]:
