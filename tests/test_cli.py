@@ -15,6 +15,7 @@ from quendor.cli import (
     main,
 )
 from quendor.zmachine.instructions import Operand, OperandType
+from quendor.zmachine.interpreter import Interpreter
 from quendor.zmachine.story import Story
 from quendor.zmachine.versions import V1, V2, V3, V6
 
@@ -30,7 +31,10 @@ def test_main_reports_success(
     story_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = main([str(story_path)])
+    # Inspection rather than a bare run: running a story is the interpreter's
+    # young, still-forming contract, while the banner and exit code of an
+    # inspection are settled behavior.
+    exit_code = main([str(story_path), "--header"])
 
     assert_that(exit_code).is_equal_to(0)
     assert_that(capsys.readouterr().out).contains("Quendor Z-Machine Interpreter")
@@ -49,7 +53,7 @@ def test_module_execution_runs_main(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(sys, "argv", ["quendor", str(story_path)])
+    monkeypatch.setattr(sys, "argv", ["quendor", str(story_path), "--header"])
 
     with pytest.raises(SystemExit) as exit_info:
         runpy.run_module("quendor", run_name="__main__")
@@ -325,6 +329,37 @@ def test_disassembly_start_address_is_hex(
 
     assert_that(out).contains("$00504")
     assert_that(out).does_not_contain("ADD")
+
+
+def test_running_a_story_reports_the_frontier(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A bare invocation runs the interpreter. The fixture's program area is
+    # zeroes, which is not decodable, and the failure lands on stderr.
+    path = tmp_path / "story.z3"
+    path.write_bytes(story_data(V3))
+
+    exit_code = main([str(path)])
+
+    assert_that(exit_code).is_equal_to(1)
+    assert_that(capsys.readouterr().err).contains("not an opcode")
+
+
+def test_running_a_story_that_stops_exits_cleanly(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No opcode handler can stop the machine yet, so stop it by decree: the
+    # clean-exit contract is worth pinning before quit exists.
+    monkeypatch.setattr(Interpreter, "run", lambda _self: None)
+
+    path = tmp_path / "story.z3"
+    path.write_bytes(story_data(V3))
+
+    assert_that(main([str(path)])).is_equal_to(0)
 
 
 def test_header_and_disassembly_combine(

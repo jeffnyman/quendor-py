@@ -1,11 +1,25 @@
-"""The story file header (§ 11)."""
+"""The story file header (§ 11).
+
+The first 64 bytes of every story file describe the shape of everything else:
+where the tables live, which Version's rules apply, and how packed addresses
+should be unpacked.
+
+This is a *view* over live memory rather than a snapshot. A few header fields
+are writable during play -- the transcription bit of Flags 2, for instance
+(§ 11.1.2.1) -- and the interpreter itself writes screen dimensions and its
+own version number after loading. Reading through to memory keeps those in
+step. Fields not marked "Dyn" in the § 11.1 table may not legally change, and
+§ 11.1.1 explicitly permits an interpreter to cache those; `Memory` does
+exactly that for the static memory base.
+"""
 
 from typing import Final
 
 from quendor.zmachine.memory import Memory
 from quendor.zmachine.versions import V2, V3, V5, V6, V7
 
-# Offsets into the header, named after the § 11.1 table.
+# Offsets into the header, named after the § 11.1 table. (memory.py keeps
+# private mirrors of FLAGS_2 and STATIC_MEMORY_BASE; it cannot import them.)
 VERSION: Final = 0x00
 FLAGS_1: Final = 0x01
 RELEASE: Final = 0x02

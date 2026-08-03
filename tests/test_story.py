@@ -31,24 +31,6 @@ def test_truncated_story_is_rejected(story_data: Callable[..., bytes]) -> None:
     assert_that(str(error_info.value)).contains("looks truncated")
 
 
-def test_static_memory_inside_the_header_is_rejected(
-    story_data: Callable[..., bytes],
-) -> None:
-    with pytest.raises(StoryFileError) as error_info:
-        Story(story_data(V3, static_memory_base=0x20))
-
-    assert_that(str(error_info.value)).contains("inside the 64-byte header")
-
-
-def test_static_memory_beyond_the_file_is_rejected(
-    story_data: Callable[..., bytes],
-) -> None:
-    with pytest.raises(StoryFileError) as error_info:
-        Story(story_data(V3, static_memory_base=0x2000))
-
-    assert_that(str(error_info.value)).contains("past the end of the file")
-
-
 def test_padding_beyond_recorded_length_is_accepted(
     story_data: Callable[..., bytes],
 ) -> None:

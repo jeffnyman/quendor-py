@@ -10,9 +10,10 @@ from quendor.zmachine.errors import QuendorError
 from quendor.zmachine.flags import describe_flags_1, describe_flags_2
 from quendor.zmachine.header import Header
 from quendor.zmachine.instructions import Decoder, Instruction, Operand, OperandType
+from quendor.zmachine.interpreter import Interpreter
+from quendor.zmachine.state import GameState
 from quendor.zmachine.story import Story
 from quendor.zmachine.text import TextCodec
-from quendor.zmachine.versions import V6
 
 PROGRAM_NAME = "quendor"
 DESCRIPTION = "A Z-Machine emulator and interpreter."
@@ -88,7 +89,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         print(format_disassembly(story, start, arguments.count))
 
-    return 0
+    # The inspection flags are documented as "... and exit": asking to look
+    # at a story is different from asking to run it.
+    if arguments.header or arguments.disassemble:
+        return 0
+
+    return play(story)
+
+
+def play(story: Story) -> int:
+    """Run a story file."""
+
+    return _play(story)
 
 
 def display_header(story: Story, path: Path) -> str:
@@ -114,23 +126,13 @@ def display_header(story: Story, path: Path) -> str:
 
 
 def first_instruction_address(story: Story) -> int:
-    """Where execution begins (§ 11.1).
+    """Where the interpreter would begin executing this story.
 
-    In most Versions the header holds a byte address pointing straight at an
-    instruction. Version 6 instead holds the packed address of a "main"
-    routine, and a routine begins with a header rather than with code: one
-    byte giving the local variable count, followed in V1-4 by two bytes of
-    initial value per local (§ 5.2). V6 is past that, so one byte is enough.
+    Delegates to `GameState` so the disassembler's default start and the
+    machine's actual boot can never drift apart.
     """
 
-    header = story.header
-
-    if header.version != V6:
-        return header.initial_program_counter
-
-    routine = header.unpack_routine_address(header.initial_program_counter)
-
-    return routine + 1
+    return GameState(story).pc
 
 
 def format_disassembly(story: Story, start: int, count: int) -> str:
@@ -346,6 +348,18 @@ def _execution_section(header: Header) -> list[str]:
         ]
 
     return lines
+
+
+def _play(story: Story) -> int:
+    machine = Interpreter(story)
+
+    try:
+        machine.run()
+    except QuendorError as error:
+        _fail(f"\n{error}")
+        return 1
+
+    return 0
 
 
 def _fail(message: str) -> None:
