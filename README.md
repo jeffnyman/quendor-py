@@ -6,8 +6,8 @@ The Z-Machine is the virtual machine that Infocom designed in 1979 to run its
 text adventures, and which the interactive fiction community has used ever
 since. Quendor reads a compiled story file and executes it.
 
-> **Status:** pre-alpha. The project scaffolding is in place; the interpreter
-> itself is not yet implemented.
+> **Status:** pre-alpha. Quendor can load, validate, inspect, and disassemble
+> story files; it cannot yet run them.
 
 ## Requirements
 
@@ -24,15 +24,31 @@ uv sync --all-groups
 
 ## Usage
 
+Quendor takes a story file -- a compiled Z-Machine game -- and, for now,
+inspects it. Running it comes later.
+
 ```bash
-uv run quendor --help
-uv run quendor --version
+uv run quendor STORY.z3                        # load and validate a story
+uv run quendor STORY.z3 --header               # display the header
+uv run quendor STORY.z3 --disassemble          # decode instructions
+uv run quendor STORY.z3 --disassemble --start 6e9b --count 8
 ```
+
+- `--header` reports the story's identity (Version, release, serial), its
+  flags decoded into words, the memory map, table addresses, and where
+  execution begins, laid out for comparison against ztools' `infodump`.
+- `--disassemble` lists instructions in roughly `txd`'s layout: address,
+  raw bytes, mnemonic, operands, store, branch, and inline text. `--start`
+  takes a hex byte address and defaults to the first instruction; `--count`
+  defaults to 16.
+- A `.zblorb` package is unwrapped and its story loaded. A resource-only
+  Blorb is rejected with a message saying what it holds instead -- and
+  naming the story file sitting beside it, when there is an obvious one.
 
 The package is also runnable as a module:
 
 ```bash
-uv run python -m quendor
+uv run python -m quendor STORY.z3
 ```
 
 ## Development
@@ -145,6 +161,10 @@ git commit -m "Update entharion submodule"
 - **Coverage.** The suite is gated at 100% branch coverage. This is deliberate
   for a project of this size; adjust `fail_under` in `pyproject.toml` if it
   stops being useful.
+- **Spec citations.** The `§` references in code, docstrings, and output
+  follow the HTML rendering of the Z-Machine Standard 1.1 vendored at
+  `entharion/specs/Z-Machine-Standard-1.1/`. Other renderings of the same
+  Standard, including the PDF beside it, number some paragraphs differently.
 - **Line endings.** LF everywhere except Windows script files, enforced by both
   `.gitattributes` and `.editorconfig`.
 
