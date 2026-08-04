@@ -17,7 +17,7 @@ polices is the dynamic/static one.
 from typing import Final
 
 from quendor.zmachine.errors import MemoryAccessError, StoryFileError
-from quendor.zmachine.numbers import MAXIMUM_WORD
+from quendor.zmachine.numbers import MAXIMUM_BYTE, MAXIMUM_WORD
 
 """By tradition the first 64 bytes of dynamic memory are the header (§ 1.1.1.1)."""
 HEADER_SIZE: Final = 0x40
@@ -123,6 +123,20 @@ class Memory:
 
         self._data[address] = value >> 8
         self._data[address + 1] = value & 0xFF
+
+    def write_byte(self, address: int, value: int) -> None:
+        """Write a byte to dynamic memory.
+
+        Static memory is read-only to the game (§ 1.1.2).
+        """
+
+        self._check_writable(address, 1)
+
+        if not 0 <= value <= MAXIMUM_BYTE:
+            message = f"${value:x} does not fit in a byte"
+            raise MemoryAccessError(message)
+
+        self._data[address] = value
 
     def restore_dynamic_memory(self) -> None:
         """Reset dynamic memory to its state on loading (§ 6.1.3).

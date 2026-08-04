@@ -351,9 +351,13 @@ def test_running_a_story_reports_unimplemented_opcodes(
     story_data: Callable[..., bytes],
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # rtrue decodes fine but has no handler yet; the frontier message names
+    # Strip rtrue's handler so an unimplemented opcode exists to report,
+    # however complete the interpreter becomes. The frontier message names
     # the method to write.
+    monkeypatch.delattr(Interpreter, "_op_rtrue")
+
     data = bytearray(story_data(V3))
     data[0x0500] = 0xB0
 
