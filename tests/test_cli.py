@@ -347,6 +347,25 @@ def test_running_a_story_reports_the_frontier(
     assert_that(capsys.readouterr().err).contains("not an opcode")
 
 
+def test_running_a_story_reports_unimplemented_opcodes(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # rtrue decodes fine but has no handler yet; the frontier message names
+    # the method to write.
+    data = bytearray(story_data(V3))
+    data[0x0500] = 0xB0
+
+    path = tmp_path / "story.z3"
+    path.write_bytes(bytes(data))
+
+    exit_code = main([str(path)])
+
+    assert_that(exit_code).is_equal_to(1)
+    assert_that(capsys.readouterr().err).contains("define `Interpreter._op_rtrue`")
+
+
 def test_running_a_story_that_stops_exits_cleanly(
     story_data: Callable[..., bytes],
     tmp_path: Path,
