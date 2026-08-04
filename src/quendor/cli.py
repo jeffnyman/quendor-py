@@ -6,22 +6,22 @@ from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path
 
-from quendor.zmachine.errors import QuendorError
+from quendor.zmachine.errors import QuendorError, UnimplementedOpcodeError
 from quendor.zmachine.flags import describe_flags_1, describe_flags_2
 from quendor.zmachine.header import Header
 from quendor.zmachine.instructions import Decoder, Instruction, Operand, OperandType
 from quendor.zmachine.interpreter import Interpreter
-from quendor.zmachine.state import GameState
+from quendor.zmachine.state import (
+    FIRST_GLOBAL_VARIABLE,
+    FIRST_LOCAL_VARIABLE,
+    STACK_VARIABLE,
+    GameState,
+)
 from quendor.zmachine.story import Story
 from quendor.zmachine.text import TextCodec
 
 PROGRAM_NAME = "quendor"
 DESCRIPTION = "A Z-Machine emulator and interpreter."
-
-# Variable numbers partition at $0f: $00 is the stack, $01 to $0f the
-# current routine's locals, and $10 to $ff the globals (§ 4.2.2).
-LAST_LOCAL_VARIABLE = 0x0F
-FIRST_GLOBAL_VARIABLE = 0x10
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -226,10 +226,10 @@ def format_variable(number: int) -> str:
     that disassemblies can be compared side by side (§ 14, Remarks).
     """
 
-    if number == 0:
+    if number == STACK_VARIABLE:
         return "sp"
-    if number <= LAST_LOCAL_VARIABLE:
-        return f"L{number - 1:02x}"
+    if number < FIRST_GLOBAL_VARIABLE:
+        return f"L{number - FIRST_LOCAL_VARIABLE:02x}"
 
     return f"G{number - FIRST_GLOBAL_VARIABLE:02x}"
 
@@ -355,6 +355,9 @@ def _play(story: Story) -> int:
 
     try:
         machine.run()
+    except UnimplementedOpcodeError as error:
+        _fail(f"\n{error}")
+        return 1
     except QuendorError as error:
         _fail(f"\n{error}")
         return 1

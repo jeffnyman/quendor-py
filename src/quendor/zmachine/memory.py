@@ -17,12 +17,10 @@ polices is the dynamic/static one.
 from typing import Final
 
 from quendor.zmachine.errors import MemoryAccessError, StoryFileError
+from quendor.zmachine.numbers import MAXIMUM_WORD
 
 """By tradition the first 64 bytes of dynamic memory are the header (§ 1.1.1.1)."""
 HEADER_SIZE: Final = 0x40
-
-"""Words hold any value in the range $0000 to $ffff (§ 2.1)."""
-MAXIMUM_WORD: Final = 0xFFFF
 
 # These two offsets mirror header.py's § 11.1 table. Memory sits beneath
 # Header -- header.py imports this module -- so importing them back would
