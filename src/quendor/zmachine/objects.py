@@ -134,6 +134,18 @@ class ObjectTable:
         address = self.entry_address(number) + offset
         self._memory.write_byte(address, self._memory.read_byte(address) | (1 << bit))
 
+    def clear_attribute(self, number: int, attribute: int) -> None:
+        """Clear an object's attribute flag (§ 15, `clear_attr`).
+
+        Object 0 has no attributes to clear: the write form of the policy.
+        """
+        if number == NOTHING:
+            return
+
+        offset, bit = self._attribute_position(attribute)
+        address = self.entry_address(number) + offset
+        self._memory.write_byte(address, self._memory.read_byte(address) & ~(1 << bit))
+
     def test_attribute(self, number: int, attribute: int) -> bool:
         """Whether an object's attribute flag is set (§ 12.3.1).
 
@@ -229,6 +241,26 @@ class ObjectTable:
             data_address=data,
             next_address=data + length,
         )
+
+    def property_length_at(self, data_address: int) -> int:
+        """The length of a property, given only its data address (§ 12.4.2.1.1).
+
+        `get_prop_len` hands over the data address alone, so the size byte is
+        read from just before it. § 15 requires `get_prop_len 0` to answer 0.
+        """
+
+        if data_address == 0:
+            return 0
+
+        size = self._memory.read_byte(data_address - 1)
+
+        if self._version <= V3:
+            return (size >> V3_LENGTH_SHIFT) + 1
+
+        if size & V4_LONG_PROPERTY:
+            return (size & V4_LENGTH_MASK) or MAXIMUM_LONG_PROPERTY
+
+        return 2 if size & V4_TWO_BYTE_LENGTH else 1
 
     def find_property(self, number: int, property_number: int) -> Property | None:
         """The property an object provides, or None if it does not (§ 12.4).

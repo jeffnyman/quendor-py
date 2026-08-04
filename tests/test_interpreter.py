@@ -4,10 +4,12 @@ import pytest
 from assertpy import assert_that
 
 from quendor.zmachine.errors import ExecutionError, UnimplementedOpcodeError
+from quendor.zmachine.input import Keyboard, ScriptedKeyboard
 from quendor.zmachine.instructions import Instruction
 from quendor.zmachine.interpreter import Interpreter
 from quendor.zmachine.output import Screen
 from quendor.zmachine.story import Story
+from quendor.zmachine.text import TextCodec
 from quendor.zmachine.versions import V3, V6
 
 PROGRAM = 0x0500
@@ -57,6 +59,7 @@ def machine_running(
     *,
     routine: bytes | None = None,
     screen: Screen | None = None,
+    keyboard: Keyboard | None = None,
     patches: dict[int, bytes] | None = None,
     version: int = V3,
     program_at: int = PROGRAM,
@@ -71,7 +74,26 @@ def machine_running(
     for address, blob in (patches or {}).items():
         data[address : address + len(blob)] = blob
 
-    return Interpreter(Story(bytes(data)), screen if screen is not None else Screen())
+    return Interpreter(
+        Story(bytes(data)),
+        screen if screen is not None else Screen(),
+        keyboard if keyboard is not None else ScriptedKeyboard([]),
+    )
+
+
+def dictionary_patch(story_data: Callable[..., bytes], words: list[str]) -> bytes:
+    """A no-separator dictionary holding `words`, for the fixture's address."""
+
+    base = Story(story_data(V3))
+    codec = TextCodec(base.memory, base.header)
+
+    entries = sorted(codec.encode_word(word) for word in words)
+    table = bytes([0, 7]) + len(entries).to_bytes(2, "big")
+
+    for entry in entries:
+        table += entry + bytes(3)
+
+    return table
 
 
 def object_machine(
@@ -517,6 +539,212 @@ def test_print_obj_speaks_the_short_name(
     machine.step()
 
     assert_that("".join(screen.written)).is_equal_to("hi")
+
+
+def test_sread_fills_both_buffers(story_data: Callable[..., bytes]) -> None:
+    program = bytes([0xE4, 0x5F, 0x90, 0xB0]) + bytes([0xBA])  # sread; quit
+    machine = machine_running(
+        program,
+        story_data,
+        keyboard=ScriptedKeyboard(["OPEN Mailbox"]),
+        patches={
+            0x0300: dictionary_patch(story_data, ["mailbox", "open", "xyzzy"]),
+            0x0090: bytes([20]),  # text buffer: up to 19 letters
+            0x00B0: bytes([5]),  # parse buffer: up to 5 words
+        },
+    )
+
+    machine.run()
+
+    memory = machine.state.memory
+
+    # Lowercased, zero-terminated, no carriage return (§ 15, read).
+    assert_that(memory.read_bytes(0x91, 13)).is_equal_to(b"open mailbox\x00")
+
+    assert_that(memory.read_byte(0xB1)).is_equal_to(2)
+
+    first = memory.read_word(0xB2)
+    assert_that(first).is_equal_to(machine.dictionary.lookup("open"))
+    assert_that(first).is_not_equal_to(0)
+    assert_that(memory.read_byte(0xB4)).is_equal_to(4)
+    assert_that(memory.read_byte(0xB5)).is_equal_to(1)
+
+    second = memory.read_word(0xB6)
+    assert_that(second).is_equal_to(machine.dictionary.lookup("mailbox"))
+    assert_that(memory.read_byte(0xB8)).is_equal_to(7)
+    assert_that(memory.read_byte(0xB9)).is_equal_to(6)
+
+    assert_that(machine.running).is_false()  # quit ran after the read
+
+
+def test_sread_marks_unknown_words(story_data: Callable[..., bytes]) -> None:
+    program = bytes([0xE4, 0x5F, 0x90, 0xB0, 0xBA])
+    machine = machine_running(
+        program,
+        story_data,
+        keyboard=ScriptedKeyboard(["xyzzy plugh"]),
+        patches={
+            0x0300: dictionary_patch(story_data, ["open"]),
+            0x0090: bytes([20]),
+            0x00B0: bytes([5]),
+        },
+    )
+
+    machine.run()
+
+    memory = machine.state.memory
+    assert_that(memory.read_byte(0xB1)).is_equal_to(2)
+    assert_that(memory.read_word(0xB2)).is_equal_to(0)
+    assert_that(memory.read_word(0xB6)).is_equal_to(0)
+
+
+def test_sread_without_a_parse_buffer(story_data: Callable[..., bytes]) -> None:
+    program = bytes([0xE4, 0x7F, 0x90, 0xBA])
+    machine = machine_running(
+        program,
+        story_data,
+        keyboard=ScriptedKeyboard(["go"]),
+        patches={0x0090: bytes([20])},
+    )
+
+    machine.run()
+
+    assert_that(machine.state.memory.read_bytes(0x91, 3)).is_equal_to(b"go\x00")
+    assert_that(machine.running).is_false()
+
+
+def test_end_of_input_ends_the_session(story_data: Callable[..., bytes]) -> None:
+    # The default keyboard has no script: reading from it is EOF, which is
+    # a departure rather than a fault.
+    machine = machine_running(
+        bytes([0xE4, 0x7F, 0x90]), story_data, patches={0x0090: bytes([20])}
+    )
+
+    machine.run()
+
+    assert_that(machine.running).is_false()
+    assert_that(machine.instruction_count).is_equal_to(1)
+
+
+def test_dec_family(story_data: Callable[..., bytes]) -> None:
+    program = (
+        bytes([0x0D, 0x10, 0x2A])  # store g00 #2a
+        + bytes([0x96, 0x10])  # dec g00
+        + bytes([0x04, 0x10, 0x2A, 0xC3])  # dec_chk g00 #2a: 40 < 42
+    )
+    machine = machine_running(program, story_data, global_variables=0x0100)
+
+    machine.step()
+    machine.step()
+    machine.step()
+
+    assert_that(machine.state.read_variable(0x10)).is_equal_to(40)
+    assert_that(machine.state.pc).is_equal_to(PROGRAM + 9 + 1)  # branched
+
+
+def test_test_branches_when_every_bit_is_set(
+    story_data: Callable[..., bytes],
+) -> None:
+    all_set = machine_running(bytes([0x07, 0x0C, 0x04, 0xC3]), story_data)
+    all_set.step()
+    assert_that(all_set.state.pc).is_equal_to(PROGRAM + 4 + 1)
+
+    partial = machine_running(bytes([0x07, 0x0C, 0x05, 0xC3]), story_data)
+    partial.step()
+    assert_that(partial.state.pc).is_equal_to(PROGRAM + 4)
+
+
+def test_jg(story_data: Callable[..., bytes]) -> None:
+    machine = machine_running(bytes([0x03, 0x07, 0x05, 0xC3]), story_data)
+
+    machine.step()
+
+    assert_that(machine.state.pc).is_equal_to(PROGRAM + 4 + 1)
+
+
+def test_mul(story_data: Callable[..., bytes]) -> None:
+    machine = machine_running(bytes([0x16, 0x06, 0x07, 0x00]), story_data)
+
+    machine.step()
+
+    assert_that(machine.state.pop()).is_equal_to(42)
+
+
+def test_division_truncates_toward_zero(
+    story_data: Callable[..., bytes],
+) -> None:
+    # The numbers.py prophecy: -11 div 2 is -5, where // would say -6.
+    div = machine_running(bytes([0xD7, 0x1F, 0xFF, 0xF5, 0x02, 0x00]), story_data)
+    div.step()
+    assert_that(div.state.pop()).is_equal_to(0xFFFB)
+
+    # And the remainder keeps the dividend's sign: -13 mod 4 is -1.
+    mod = machine_running(bytes([0xD8, 0x1F, 0xFF, 0xF3, 0x04, 0x00]), story_data)
+    mod.step()
+    assert_that(mod.state.pop()).is_equal_to(0xFFFF)
+
+
+def test_division_by_zero_faults(story_data: Callable[..., bytes]) -> None:
+    machine = machine_running(bytes([0x17, 0x05, 0x00, 0x00]), story_data)
+
+    with pytest.raises(ExecutionError) as error_info:
+        machine.step()
+
+    assert_that(str(error_info.value)).contains("division by zero")
+
+
+def test_storeb(story_data: Callable[..., bytes]) -> None:
+    machine = machine_running(bytes([0xE2, 0x57, 0x90, 0x01, 0xAB]), story_data)
+
+    machine.step()
+
+    assert_that(machine.state.memory.read_byte(0x91)).is_equal_to(0xAB)
+
+
+def test_clear_attr(story_data: Callable[..., bytes]) -> None:
+    machine = object_machine(bytes([0x0C, 0x01, 0x05]), story_data)
+
+    machine.step()
+
+    assert_that(machine.objects.test_attribute(1, 5)).is_false()
+
+
+def test_get_prop_addr(story_data: Callable[..., bytes]) -> None:
+    found = object_machine(bytes([0x12, 0x01, 0x05, 0x00]), story_data)
+    found.step()
+    assert_that(found.state.pop()).is_equal_to(PROPS_AT + 4)
+
+    absent = object_machine(bytes([0x12, 0x02, 0x05, 0x00]), story_data)
+    absent.step()
+    assert_that(absent.state.pop()).is_equal_to(0)
+
+
+def test_get_prop_len(story_data: Callable[..., bytes]) -> None:
+    # 1OP with a large-constant operand: the data address of property 5.
+    two = object_machine(bytes([0x84, 0x01, 0x04, 0x00]), story_data)
+    two.step()
+    assert_that(two.state.pop()).is_equal_to(2)
+
+    zero = object_machine(bytes([0x84, 0x00, 0x00, 0x00]), story_data)
+    zero.step()
+    assert_that(zero.state.pop()).is_equal_to(0)
+
+
+def test_print_ret(story_data: Callable[..., bytes]) -> None:
+    screen = RecordingScreen()
+    machine = machine_running(
+        bytes([0xE0, 0x3F, 0x01, 0x80, 0x00]),  # call $0300 -> sp
+        story_data,
+        routine=bytes([0x00, 0xB3, 0xB5, 0xC5]),  # print_ret "hi"
+        screen=screen,
+    )
+
+    machine.step()
+    machine.step()
+
+    assert_that("".join(screen.written)).is_equal_to("hi\n")
+    assert_that(machine.state.frames).is_length(1)
+    assert_that(machine.state.pop()).is_equal_to(1)
 
 
 def test_call_with_no_operands_faults(
