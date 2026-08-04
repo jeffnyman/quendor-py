@@ -150,7 +150,7 @@ class TextCodec:
     def decode_with_length(self, address: int) -> tuple[str, int]:
         """Decode a string, also reporting how many bytes it occupied."""
         zchars, next_address = self._read_zchars(address)
-        text = self._zscii_to_text(self._zchars_to_zscii(zchars))
+        text = self.zscii_to_text(self._zchars_to_zscii(zchars))
         return text, next_address - address
 
     def decode_bytes(self, encoded: bytes) -> str:
@@ -167,7 +167,7 @@ class TextCodec:
                 word & 0b11111,
             ]
 
-        return self._zscii_to_text(self._zchars_to_zscii(zchars))
+        return self.zscii_to_text(self._zchars_to_zscii(zchars))
 
     # -- Stage one: Z-characters ---------------------------------------
 
@@ -262,7 +262,7 @@ class TextCodec:
 
     # -- Stage two: ZSCII ----------------------------------------------
 
-    def _zscii_to_text(self, codes: list[int]) -> str:
+    def zscii_to_text(self, codes: list[int]) -> str:
         """Convert ZSCII codes to Unicode text (§ 3.8)."""
 
         return "".join(self._character(code) for code in codes)

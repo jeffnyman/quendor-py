@@ -119,6 +119,26 @@ def test_oversized_word_values_are_rejected() -> None:
     assert_that(str(error_info.value)).contains("does not fit in a word")
 
 
+def test_write_byte_round_trips() -> None:
+    memory = Memory(blank_story(128))
+
+    memory.write_byte(0x20, 0xAB)
+
+    assert_that(memory.read_byte(0x20)).is_equal_to(0xAB)
+
+
+def test_oversized_byte_values_are_rejected() -> None:
+    with pytest.raises(MemoryAccessError) as error_info:
+        Memory(blank_story(128)).write_byte(0x20, 0x100)
+
+    assert_that(str(error_info.value)).contains("does not fit in a byte")
+
+
+def test_byte_writes_respect_static_memory() -> None:
+    with pytest.raises(MemoryAccessError):
+        Memory(blank_story(128)).write_byte(0x40, 1)
+
+
 def test_restart_restores_dynamic_memory_but_keeps_flags_2(
     story_data: Callable[..., bytes],
 ) -> None:

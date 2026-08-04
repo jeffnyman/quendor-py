@@ -22,6 +22,12 @@ WORD_MASK: Final = 0xFFFF
 """The same value in its bounding role: the largest storable word (§ 2.1)."""
 MAXIMUM_WORD: Final = WORD_MASK
 
+"""$ff in its masking role: truncate a value into a byte."""
+BYTE_MASK: Final = 0xFF
+
+"""The largest storable byte, for the byte-sized writes of § 15."""
+MAXIMUM_BYTE: Final = BYTE_MASK
+
 WORD_SIZE: Final = 0x10000
 SIGN_BIT: Final = 0x8000
 
