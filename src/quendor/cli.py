@@ -11,6 +11,7 @@ from quendor.zmachine.flags import describe_flags_1, describe_flags_2
 from quendor.zmachine.header import Header
 from quendor.zmachine.instructions import Decoder, Instruction, Operand, OperandType
 from quendor.zmachine.interpreter import Interpreter
+from quendor.zmachine.output import Screen
 from quendor.zmachine.state import (
     FIRST_GLOBAL_VARIABLE,
     FIRST_LOCAL_VARIABLE,
@@ -22,6 +23,14 @@ from quendor.zmachine.text import TextCodec
 
 PROGRAM_NAME = "quendor"
 DESCRIPTION = "A Z-Machine emulator and interpreter."
+
+
+class StandardOutputScreen(Screen):
+    """The simplest possible `Screen`: text straight to stdout."""
+
+    def write(self, text: str) -> None:
+        """Print as-is: the text carries its own newlines."""
+        print(text, end="")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -100,7 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def play(story: Story) -> int:
     """Run a story file."""
 
-    return _play(story)
+    return _play(story, StandardOutputScreen())
 
 
 def display_header(story: Story, path: Path) -> str:
@@ -350,8 +359,8 @@ def _execution_section(header: Header) -> list[str]:
     return lines
 
 
-def _play(story: Story) -> int:
-    machine = Interpreter(story)
+def _play(story: Story, screen: Screen) -> int:
+    machine = Interpreter(story, screen)
 
     try:
         machine.run()

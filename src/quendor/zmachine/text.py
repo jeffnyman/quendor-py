@@ -89,6 +89,70 @@ class TextCodec:
         self._alphabets = self._build_alphabets()
         self._unicode = self._build_unicode_table()
 
+    # -- Setup ---------------------------------------------------------
+
+    def _build_alphabets(self) -> tuple[tuple[int, ...], ...]:
+        address = self._header.alphabet_table_address
+
+        if address == 0:
+            return self._default_alphabets(self._version)
+
+        # § 3.5.5.1: 78 bytes, three blocks of 26 ZSCII values.
+        raw = self._memory.read_bytes(address, CUSTOM_ALPHABET_SIZE)
+        rows = [
+            list(raw[block * ALPHABET_SIZE : (block + 1) * ALPHABET_SIZE])
+            for block in range(3)
+        ]
+
+        # "Z-characters 6 and 7 of A2, however, are still translated as ZSCII
+        # escape and new-line codes" -- overridden by position, not by value.
+        # Viola replaces every byte matching the one at slot 7, which would
+        # also rewrite any later slot holding the same character.
+        rows[A2][0] = 0
+        rows[A2][1] = ZSCII_NEWLINE
+
+        return tuple(tuple(row) for row in rows)
+
+    def _build_unicode_table(self) -> dict[int, int]:
+        address = self._header.unicode_translation_table_address
+
+        if address == 0:
+            return dict(DEFAULT_UNICODE_TABLE)
+
+        # § 3.8.5.2.1: one byte giving N, then N words. This *replaces* the
+        # default table rather than extending it, so codes past 155+N-1 are
+        # left undefined (§ 3.8.5.2.2).
+        count = self._memory.read_byte(address)
+
+        return {
+            FIRST_EXTRA_CHARACTER + index: self._memory.read_word(
+                address + 1 + 2 * index
+            )
+            for index in range(count)
+        }
+
+    def _default_alphabets(self, version: int) -> tuple[tuple[int, ...], ...]:
+        """The built-in alphabet table for a Version (§ 3.5.3, § 3.5.4)."""
+
+        a2 = V1_A2 if version == 1 else DEFAULT_A2
+
+        return tuple(
+            tuple(ord(character) for character in row)
+            for row in (DEFAULT_A0, DEFAULT_A1, a2)
+        )
+
+    # -- Whole strings -------------------------------------------------
+
+    def decode(self, address: int) -> str:
+        """Decode the string beginning at a byte address."""
+        return self.decode_with_length(address)[0]
+
+    def decode_with_length(self, address: int) -> tuple[str, int]:
+        """Decode a string, also reporting how many bytes it occupied."""
+        zchars, next_address = self._read_zchars(address)
+        text = self._zscii_to_text(self._zchars_to_zscii(zchars))
+        return text, next_address - address
+
     def decode_bytes(self, encoded: bytes) -> str:
         """Decode a string already lifted out of memory, as § 4.8 text is."""
 
@@ -104,6 +168,8 @@ class TextCodec:
             ]
 
         return self._zscii_to_text(self._zchars_to_zscii(zchars))
+
+    # -- Stage one: Z-characters ---------------------------------------
 
     def _read_zchars(
         self, address: int, max_bytes: int | None = None
@@ -139,6 +205,62 @@ class TextCodec:
 
             if max_bytes is not None and read >= max_bytes:
                 return zchars, address
+
+    def _abbreviation(self, bank: int, index: int, depth: int) -> list[int]:
+        """Expand abbreviation 32(z-1)+x (§ 3.3)."""
+
+        # `_is_abbreviation` admits no z-character in V1, the only Version
+        # without a table, so a missing table here means a broken story.
+        base = self._header.abbreviations_address
+
+        if base is None:
+            message = "abbreviation used but this Version has no table (§ 3.3)"
+            raise StoryFileError(message)
+
+        entry = ABBREVIATIONS_PER_BANK * (bank - 1) + index
+        address = base + 2 * entry
+
+        # The table holds word addresses, the only place they are used
+        # (§ 1.2.2).
+        target = self._memory.read_word(address) * 2
+        zchars, _ = self._read_zchars(target)
+
+        return self._zchars_to_zscii(zchars, depth + 1)
+
+    def _is_abbreviation(self, zchar: int) -> bool:
+        """§ 3.3: banks 1-3 from V3, bank 1 only in V2, none in V1."""
+
+        if self._version >= V3:
+            return 1 <= zchar <= LAST_ABBREVIATION_ZCHAR
+
+        return self._version == V2 and zchar == 1
+
+    def _shift(self, zchar: int, current: int, locked: int) -> tuple[int, int] | None:
+        """Apply a shift Z-character, returning the new (current, locked).
+
+        Returns None if this Z-character is not a shift at all.
+        """
+        if self._version >= V3:
+            # § 3.2.3: 4 and 5 shift the next character only; no locks.
+            if zchar == SHIFT_TO_A1:
+                return A1, locked
+            if zchar == SHIFT_TO_A2:
+                return A2, locked
+            return None
+
+        # § 3.2.2: in V1 and V2 the alphabets rotate. Z-characters 2 and 4
+        # move one step forward, 3 and 5 two steps; 2 and 3 last for a single
+        # character, 4 and 5 lock.
+        if zchar in (2, 3):
+            return (current + zchar - 1) % 3, locked
+
+        if zchar in (4, 5):
+            target = (current + zchar - 3) % 3
+            return target, target
+
+        return None
+
+    # -- Stage two: ZSCII ----------------------------------------------
 
     def _zscii_to_text(self, codes: list[int]) -> str:
         """Convert ZSCII codes to Unicode text (§ 3.8)."""
@@ -199,14 +321,6 @@ class TextCodec:
 
         return codes
 
-    def _is_abbreviation(self, zchar: int) -> bool:
-        """§ 3.3: banks 1-3 from V3, bank 1 only in V2, none in V1."""
-
-        if self._version >= V3:
-            return 1 <= zchar <= LAST_ABBREVIATION_ZCHAR
-
-        return self._version == V2 and zchar == 1
-
     def _character(self, code: int) -> str:
         # § 3.8.2.1: null is defined for output but has no effect.
         if code == 0:
@@ -237,98 +351,30 @@ class TextCodec:
         # text at all.
         return ""
 
-    def _shift(self, zchar: int, current: int, locked: int) -> tuple[int, int] | None:
-        """Apply a shift Z-character, returning the new (current, locked).
+    # -- Encoding, for dictionary lookup (§ 3.7) -----------------------
 
-        Returns None if this Z-character is not a shift at all.
+    def zscii_for(self, character: str) -> int:
+        """The ZSCII code for a character (§ 3.8), or 0 if undefined.
+
+        "Undefined" covers anything that is not one character. A keyboard has
+        to answer `read_char` with something, and a terminal reports an arrow
+        key as an escape sequence three bytes long; § 3.8 gives that no code,
+        which is an answer rather than an error.
         """
-        if self._version >= V3:
-            # § 3.2.3: 4 and 5 shift the next character only; no locks.
-            if zchar == SHIFT_TO_A1:
-                return A1, locked
-            if zchar == SHIFT_TO_A2:
-                return A2, locked
-            return None
 
-        # § 3.2.2: in V1 and V2 the alphabets rotate. Z-characters 2 and 4
-        # move one step forward, 3 and 5 two steps; 2 and 3 last for a single
-        # character, 4 and 5 lock.
-        if zchar in (2, 3):
-            return (current + zchar - 1) % 3, locked
+        if len(character) != 1:
+            return 0
 
-        if zchar in (4, 5):
-            target = (current + zchar - 3) % 3
-            return target, target
+        code = ord(character)
 
-        return None
+        if ZSCII_SPACE <= code <= LAST_ASCII_MATCHING_ZSCII:
+            return code
 
-    def _abbreviation(self, bank: int, index: int, depth: int) -> list[int]:
-        """Expand abbreviation 32(z-1)+x (§ 3.3)."""
+        if character == "\n":
+            return ZSCII_NEWLINE
 
-        # `_is_abbreviation` admits no z-character in V1, the only Version
-        # without a table, so a missing table here means a broken story.
-        base = self._header.abbreviations_address
+        for zscii, unicode_code in self._unicode.items():
+            if unicode_code == code:
+                return zscii
 
-        if base is None:
-            message = "abbreviation used but this Version has no table (§ 3.3)"
-            raise StoryFileError(message)
-
-        entry = ABBREVIATIONS_PER_BANK * (bank - 1) + index
-        address = base + 2 * entry
-
-        # The table holds word addresses, the only place they are used
-        # (§ 1.2.2).
-        target = self._memory.read_word(address) * 2
-        zchars, _ = self._read_zchars(target)
-
-        return self._zchars_to_zscii(zchars, depth + 1)
-
-    def _default_alphabets(self, version: int) -> tuple[tuple[int, ...], ...]:
-        """The built-in alphabet table for a Version (§ 3.5.3, § 3.5.4)."""
-
-        a2 = V1_A2 if version == 1 else DEFAULT_A2
-
-        return tuple(
-            tuple(ord(character) for character in row)
-            for row in (DEFAULT_A0, DEFAULT_A1, a2)
-        )
-
-    def _build_alphabets(self) -> tuple[tuple[int, ...], ...]:
-        address = self._header.alphabet_table_address
-
-        if address == 0:
-            return self._default_alphabets(self._version)
-
-        # § 3.5.5.1: 78 bytes, three blocks of 26 ZSCII values.
-        raw = self._memory.read_bytes(address, CUSTOM_ALPHABET_SIZE)
-        rows = [
-            list(raw[block * ALPHABET_SIZE : (block + 1) * ALPHABET_SIZE])
-            for block in range(3)
-        ]
-
-        # "Z-characters 6 and 7 of A2, however, are still translated as ZSCII
-        # escape and new-line codes" -- overridden by position, not by value.
-        # Viola replaces every byte matching the one at slot 7, which would
-        # also rewrite any later slot holding the same character.
-        rows[A2][0] = 0
-        rows[A2][1] = ZSCII_NEWLINE
-
-        return tuple(tuple(row) for row in rows)
-
-    def _build_unicode_table(self) -> dict[int, int]:
-        address = self._header.unicode_translation_table_address
-
-        if address == 0:
-            return dict(DEFAULT_UNICODE_TABLE)
-
-        # § 3.8.5.2.1: one byte giving N, then N words. This *replaces* the
-        # default table rather than extending it, so codes past 155+N-1 are
-        # left undefined (§ 3.8.5.2.2).
-        count = self._memory.read_byte(address)
-
-        return {
-            FIRST_EXTRA_CHARACTER + index: self._memory.read_word(
-                address + 1 + 2 * index
-            )
-            for index in range(count)
-        }
+        return 0

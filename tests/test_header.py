@@ -131,6 +131,18 @@ def test_only_v6_and_v7_unpack_with_offsets(
     assert_that(Story(story_data(V8)).header.unpacks_with_offsets).is_false()
 
 
+def test_string_unpacking_uses_the_strings_offset(
+    story_data: Callable[..., bytes],
+) -> None:
+    v3 = Story(story_data(V3)).header
+
+    assert_that(v3.unpack_string_address(0x0100)).is_equal_to(0x0200)
+
+    v7 = Story(story_data(V7, static_strings_offset=0x20)).header
+
+    assert_that(v7.unpack_string_address(0x0100)).is_equal_to(0x0500)
+
+
 def test_routine_unpacking_by_version(story_data: Callable[..., bytes]) -> None:
     def unpacked(version: int, **fields: int) -> int:
         header = Story(story_data(version, **fields)).header

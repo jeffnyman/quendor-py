@@ -6,6 +6,7 @@ from assertpy import assert_that
 from quendor.zmachine.errors import ExecutionError, UnimplementedOpcodeError
 from quendor.zmachine.instructions import Instruction
 from quendor.zmachine.interpreter import Interpreter
+from quendor.zmachine.output import Screen
 from quendor.zmachine.story import Story
 from quendor.zmachine.versions import V3
 
@@ -13,10 +14,19 @@ PROGRAM = 0x0500
 ROUTINE = 0x0300
 
 
+class RecordingScreen(Screen):
+    def __init__(self) -> None:
+        self.written: list[str] = []
+
+    def write(self, text: str) -> None:
+        self.written.append(text)
+
+
 def machine_running(
     program: bytes,
     story_data: Callable[..., bytes],
     routine: bytes | None = None,
+    screen: Screen | None = None,
 ) -> Interpreter:
     data = bytearray(story_data(V3))
     data[PROGRAM : PROGRAM + len(program)] = program
@@ -24,7 +34,7 @@ def machine_running(
     if routine is not None:
         data[ROUTINE : ROUTINE + len(routine)] = routine
 
-    return Interpreter(Story(bytes(data)))
+    return Interpreter(Story(bytes(data)), screen if screen is not None else Screen())
 
 
 def test_boot_state(story_data: Callable[..., bytes]) -> None:
@@ -216,6 +226,33 @@ def test_return_false_branches_store_zero(
     machine.step()
 
     assert_that(machine.state.pop()).is_equal_to(0)
+
+
+def test_print_paddr_decodes_through_the_streams(
+    story_data: Callable[..., bytes],
+) -> None:
+    screen = RecordingScreen()
+
+    # The routine slot holds a packed string instead: "hi" in one word.
+    machine = machine_running(
+        bytes([0x8D, 0x01, 0x80]),  # print_paddr #0180
+        story_data,
+        routine=bytes([0xB5, 0xC5]),
+        screen=screen,
+    )
+
+    machine.step()
+
+    assert_that("".join(screen.written)).is_equal_to("hi")
+
+
+def test_quit_stops_the_machine(story_data: Callable[..., bytes]) -> None:
+    machine = machine_running(bytes([0xBA]), story_data)
+
+    machine.run()
+
+    assert_that(machine.running).is_false()
+    assert_that(machine.instruction_count).is_equal_to(1)
 
 
 def test_call_with_no_operands_faults(

@@ -294,6 +294,14 @@ class Header:
         """Largest story file this Version permits (§ 1.1.4)."""
         return _MAXIMUM_FILE_SIZE[self.version]
 
+    def unpack_string_address(self, packed: int) -> int:
+        """Convert a packed string address to a byte address (§ 1.2.3).
+
+        Identical to `unpack_routine_address` except that V6 and V7 apply the
+        strings offset rather than the routines offset.
+        """
+        return self._unpack(packed, self.static_strings_offset)
+
     def unpack_routine_address(self, packed: int) -> int:
         """Convert a packed routine address to a byte address (§ 1.2.3).
 

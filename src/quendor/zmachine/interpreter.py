@@ -3,18 +3,29 @@
 from quendor.zmachine.errors import ExecutionError, UnimplementedOpcodeError
 from quendor.zmachine.instructions import Decoder, Instruction, OperandType
 from quendor.zmachine.numbers import to_signed, to_unsigned
+from quendor.zmachine.output import Screen
+from quendor.zmachine.screen import ScreenModel
 from quendor.zmachine.state import GameState
 from quendor.zmachine.story import Story
+from quendor.zmachine.streams import OutputStreams
+from quendor.zmachine.text import TextCodec
 
 
 class Interpreter:
     """Runs a story file."""
 
-    def __init__(self, story: Story) -> None:
+    def __init__(self, story: Story, screen: Screen) -> None:
         self.story = story
+        self.screen = screen
 
         self.decoder = Decoder(story.memory, story.header.version)
+        self.text = TextCodec(story.memory, story.header)
+        self.display = ScreenModel(story.memory, story.header, screen)
         self.state = GameState(story)
+
+        self.streams = OutputStreams(
+            story.memory, story.header, self.display, self.text
+        )
 
         self.instruction_count = 0
         self.running = True
@@ -97,6 +108,19 @@ class Interpreter:
         self._store(
             instruction, self.state.memory.read_word(array + 2 * to_signed(index))
         )
+
+    # -- Printing ------------------------------------------------------
+
+    def _op_print_paddr(self, instruction: Instruction) -> None:
+        """The operand is a packed *string* address (§ 1.2.3)."""
+        packed = self._values(instruction)[0]
+        address = self.state.header.unpack_string_address(packed)
+        self.streams.write(self.text.decode(address))
+
+    # -- Miscellaneous -------------------------------------------------
+
+    def _op_quit(self, _instruction: Instruction) -> None:
+        self.running = False
 
     # -- Helpers -------------------------------------------------------
 
