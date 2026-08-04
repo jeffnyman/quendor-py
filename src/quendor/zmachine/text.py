@@ -24,6 +24,13 @@ LAST_ABBREVIATION_ZCHAR: Final = 3
 SHIFT_TO_A1: Final = 4
 SHIFT_TO_A2: Final = 5
 
+"""Encoded words are padded out with Z-character 5s (§ 3.7, § 13.3)."""
+PADDING_ZCHAR: Final = 5
+
+"""Dictionary words hold 6 Z-characters in V1-3, 9 from V4 (§ 13.3, § 13.4)."""
+WORD_RESOLUTION_V3: Final = 6
+WORD_RESOLUTION_V4: Final = 9
+
 """ZSCII agrees with ASCII from space up to tilde (§ 3.8.3)."""
 LAST_ASCII_MATCHING_ZSCII: Final = 126
 
@@ -152,6 +159,58 @@ class TextCodec:
         zchars, next_address = self._read_zchars(address)
         text = self.zscii_to_text(self._zchars_to_zscii(zchars))
         return text, next_address - address
+
+    def encode_word(self, word: str) -> bytes:
+        """Encode text the way a dictionary entry stores it (§ 3.7).
+
+        Truncated to the Version's resolution and padded with Z-character 5s,
+        so that looking up what was typed is a bytes comparison against the
+        entries. The caller lowercases; encoding does not.
+        """
+
+        resolution = WORD_RESOLUTION_V3 if self._version <= V3 else WORD_RESOLUTION_V4
+
+        zchars: list[int] = []
+
+        for character in word:
+            zchars += self._encode_character(character)
+
+        zchars = zchars[:resolution]
+        zchars += [PADDING_ZCHAR] * (resolution - len(zchars))
+
+        encoded = bytearray()
+
+        for index in range(0, resolution, 3):
+            packed = (
+                (zchars[index] << 10) | (zchars[index + 1] << 5) | zchars[index + 2]
+            )
+
+            if index + 3 >= resolution:
+                packed |= END_BIT
+
+            encoded += packed.to_bytes(2, "big")
+
+        return bytes(encoded)
+
+    def _encode_character(self, character: str) -> list[int]:
+        """The Z-characters for one typed character (§ 3.7).
+
+        Typed text is already lower case, so A1 never applies: a character
+        is in A0, in A2 behind a single shift, or spelled out as a ten-bit
+        ZSCII escape.
+        """
+
+        code = self.zscii_for(character)
+        a0, _a1, a2 = self._alphabets
+
+        if code in a0:
+            return [FIRST_ALPHABET_ZCHAR + a0.index(code)]
+
+        # Positions 0 and 1 of A2 are the escape and newline, never matched.
+        if code in a2[2:]:
+            return [SHIFT_TO_A2, FIRST_ALPHABET_ZCHAR + a2.index(code, 2)]
+
+        return [SHIFT_TO_A2, ESCAPE_ZCHAR, (code >> 5) & 0b11111, code & 0b11111]
 
     def decode_bytes(self, encoded: bytes) -> str:
         """Decode a string already lifted out of memory, as § 4.8 text is."""

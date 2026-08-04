@@ -121,6 +121,48 @@ def test_attributes_have_a_version_ceiling(
     assert_that(str(error_info.value)).contains("attribute 32 does not exist")
 
 
+def test_attributes_clear(story_data: Callable[..., bytes]) -> None:
+    table, _memory = table_for(story_data)
+
+    table.clear_attribute(1, 5)
+
+    assert_that(table.test_attribute(1, 5)).is_false()
+
+    table.clear_attribute(NOTHING, 5)  # the write-form policy: a no-op
+
+
+def test_property_length_from_a_data_address(
+    story_data: Callable[..., bytes],
+) -> None:
+    table, _memory = table_for(story_data)
+
+    assert_that(table.property_length_at(PROPS_1 + 4)).is_equal_to(2)
+    assert_that(table.property_length_at(PROPS_1 + 7)).is_equal_to(1)
+
+    # § 15: get_prop_len 0 must answer 0.
+    assert_that(table.property_length_at(0)).is_equal_to(0)
+
+
+def test_v4_property_lengths_from_data_addresses(
+    story_data: Callable[..., bytes],
+) -> None:
+    table, _memory = table_for(
+        story_data,
+        version=V4,
+        patches={
+            0x0150: bytes([0x85, 0x83]),
+            0x0160: bytes([0x86, 0x80]),
+            0x0170: bytes([0x45]),
+            0x0180: bytes([0x05]),
+        },
+    )
+
+    assert_that(table.property_length_at(0x0152)).is_equal_to(3)
+    assert_that(table.property_length_at(0x0162)).is_equal_to(64)
+    assert_that(table.property_length_at(0x0171)).is_equal_to(2)
+    assert_that(table.property_length_at(0x0181)).is_equal_to(1)
+
+
 def test_property_table_locations(story_data: Callable[..., bytes]) -> None:
     table, _memory = table_for(story_data)
 
@@ -152,8 +194,10 @@ def test_v4_property_headers(story_data: Callable[..., bytes]) -> None:
         story_data,
         version=V4,
         patches={
-            0x0150: bytes([0x85, 0x03]),  # two-byte form, length 3
-            0x0160: bytes([0x86, 0x00]),  # two-byte form, length 0 means 64
+            # § 12.4.2.1.1: the second size byte of the two-byte form has
+            # its top bit set, so it can be told apart when read backwards.
+            0x0150: bytes([0x85, 0x83]),  # two-byte form, length 3
+            0x0160: bytes([0x86, 0x80]),  # two-byte form, length 0 means 64
             0x0170: bytes([0x45]),  # one byte, bit 6 set: length 2
             0x0180: bytes([0x05]),  # one byte, bit 6 clear: length 1
         },

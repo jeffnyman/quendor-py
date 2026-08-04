@@ -9,6 +9,15 @@ class BlorbError(QuendorError):
     """A resource file that cannot be read."""
 
 
+class EndOfInputError(QuendorError):
+    """The keyboard has no more input to give.
+
+    Not a fault: it is what a terminal reports when its input is closed, and
+    what a scripted session reports when the script runs out. The interpreter
+    treats it as the session ending rather than as an error.
+    """
+
+
 class ExecutionError(QuendorError):
     """The running program did something the Z-machine does not allow.
 

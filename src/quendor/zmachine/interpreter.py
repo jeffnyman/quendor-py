@@ -1,8 +1,14 @@
 """The execution loop and opcode semantics (§ 15)."""
 
-from quendor.zmachine.errors import ExecutionError, UnimplementedOpcodeError
+from quendor.zmachine.dictionary import Dictionary, tokenize
+from quendor.zmachine.errors import (
+    EndOfInputError,
+    ExecutionError,
+    UnimplementedOpcodeError,
+)
+from quendor.zmachine.input import Keyboard
 from quendor.zmachine.instructions import Decoder, Instruction, OperandType
-from quendor.zmachine.numbers import to_signed, to_unsigned
+from quendor.zmachine.numbers import BYTE_MASK, to_signed, to_unsigned
 from quendor.zmachine.objects import ObjectTable
 from quendor.zmachine.output import Screen
 from quendor.zmachine.screen import ScreenModel
@@ -16,13 +22,15 @@ from quendor.zmachine.versions import V6
 class Interpreter:
     """Runs a story file."""
 
-    def __init__(self, story: Story, screen: Screen) -> None:
+    def __init__(self, story: Story, screen: Screen, keyboard: Keyboard) -> None:
         self.story = story
         self.screen = screen
+        self.keyboard = keyboard
 
         self._version = story.header.version
         self.decoder = Decoder(story.memory, story.header.version)
         self.text = TextCodec(story.memory, story.header)
+        self.dictionary = Dictionary(story.memory, story.header, self.text)
         self.display = ScreenModel(story.memory, story.header, screen)
         self.objects = ObjectTable(story.memory, story.header)
         self.state = GameState(story)
@@ -103,6 +111,10 @@ class Interpreter:
         number, attribute = self._values(instruction)
         self.objects.set_attribute(number, attribute)
 
+    def _op_clear_attr(self, instruction: Instruction) -> None:
+        number, attribute = self._values(instruction)
+        self.objects.clear_attribute(number, attribute)
+
     def _op_get_parent(self, instruction: Instruction) -> None:
         """§ 15: unlike its siblings, get_parent does not branch."""
         self._store(instruction, self.objects.parent(self._values(instruction)[0]))
@@ -110,6 +122,16 @@ class Interpreter:
     def _op_get_prop(self, instruction: Instruction) -> None:
         number, property_number = self._values(instruction)
         self._store(instruction, self.objects.get_property(number, property_number))
+
+    def _op_get_prop_addr(self, instruction: Instruction) -> None:
+        """§ 15: the property data's byte address, or 0 when absent."""
+        number, property_number = self._values(instruction)
+        entry = self.objects.find_property(number, property_number)
+        self._store(instruction, entry.data_address if entry is not None else 0)
+
+    def _op_get_prop_len(self, instruction: Instruction) -> None:
+        address = self._values(instruction)[0]
+        self._store(instruction, self.objects.property_length_at(address))
 
     def _op_get_child(self, instruction: Instruction) -> None:
         value = self.objects.child(self._values(instruction)[0])
@@ -132,6 +154,9 @@ class Interpreter:
     def _op_inc(self, instruction: Instruction) -> None:
         self._adjust(self._values(instruction)[0], 1)
 
+    def _op_dec(self, instruction: Instruction) -> None:
+        self._adjust(self._values(instruction)[0], -1)
+
     def _op_store(self, instruction: Instruction) -> None:
         number, value = self._values(instruction)
         self.state.write_variable(number, value, indirect=True)
@@ -140,6 +165,11 @@ class Interpreter:
         """§ 15: increment, then branch if now greater than value."""
         number, limit = self._values(instruction)
         self._branch(instruction, self._adjust(number, 1) > to_signed(limit))
+
+    def _op_dec_chk(self, instruction: Instruction) -> None:
+        """§ 15: decrement, then branch if now less than value."""
+        number, limit = self._values(instruction)
+        self._branch(instruction, self._adjust(number, -1) < to_signed(limit))
 
     def _op_push(self, instruction: Instruction) -> None:
         self.state.push(self._values(instruction)[0])
@@ -181,11 +211,46 @@ class Interpreter:
         a, b = (to_signed(value) for value in self._values(instruction))
         self._store(instruction, to_unsigned(a - b))
 
+    def _op_mul(self, instruction: Instruction) -> None:
+        a, b = (to_signed(value) for value in self._values(instruction))
+        self._store(instruction, to_unsigned(a * b))
+
+    def _op_div(self, instruction: Instruction) -> None:
+        """§ 15: signed division, truncating toward zero (see `numbers`)."""
+        a, b = (to_signed(value) for value in self._values(instruction))
+        self._store(instruction, to_unsigned(self._divide(a, b)))
+
+    def _op_mod(self, instruction: Instruction) -> None:
+        """§ 15: the remainder of the truncating division."""
+        a, b = (to_signed(value) for value in self._values(instruction))
+        self._store(instruction, to_unsigned(a - b * self._divide(a, b)))
+
+    def _divide(self, a: int, b: int) -> int:
+        """Divide truncating toward zero, which Python's `//` does not.
+
+        The Z-machine rounds toward zero; `//` rounds toward minus infinity
+        (the trap recorded in `numbers`). § 15 makes division by zero a
+        fault to halt on.
+        """
+
+        if b == 0:
+            message = "division by zero (§ 15)"
+            raise ExecutionError(message)
+
+        quotient = abs(a) // abs(b)
+
+        return -quotient if (a < 0) != (b < 0) else quotient
+
     # -- Bitwise (§ 2.2.1: unsigned) -----------------------------------
 
     def _op_and(self, instruction: Instruction) -> None:
         a, b = self._values(instruction)
         self._store(instruction, a & b)
+
+    def _op_test(self, instruction: Instruction) -> None:
+        """§ 15: branch when every bit of `flags` is set in `bitmap`."""
+        bitmap, flags = self._values(instruction)
+        self._branch(instruction, bitmap & flags == flags)
 
     # -- Control flow --------------------------------------------------
 
@@ -211,6 +276,10 @@ class Interpreter:
         a, b = (to_signed(value) for value in self._values(instruction))
         self._branch(instruction, a < b)
 
+    def _op_jg(self, instruction: Instruction) -> None:
+        a, b = (to_signed(value) for value in self._values(instruction))
+        self._branch(instruction, a > b)
+
     # -- Arrays --------------------------------------------------------
     #
     # Indices are signed (§ 2.2.1 makes arithmetic signed, and Viola reads
@@ -226,9 +295,37 @@ class Interpreter:
             instruction, self.state.memory.read_word(array + 2 * to_signed(index))
         )
 
+    def _op_storeb(self, instruction: Instruction) -> None:
+        array, index, value = self._values(instruction)
+        self.state.memory.write_byte(array + to_signed(index), value & BYTE_MASK)
+
     def _op_loadb(self, instruction: Instruction) -> None:
         array, index = self._values(instruction)
         self._store(instruction, self.state.memory.read_byte(array + to_signed(index)))
+
+    # -- Input (§ 13, § 15) --------------------------------------------
+
+    def _op_sread(self, instruction: Instruction) -> None:
+        """Read a command from the keyboard (§ 15, `read`).
+
+        § 15 also asks V1-3 to redisplay the status line first; that arrives
+        with the status line's own branch.
+        """
+
+        values = self._values(instruction)
+        text_buffer = values[0]
+        parse_buffer = values[1] if len(values) > 1 else 0
+
+        try:
+            typed = self._read_line(text_buffer)
+        except EndOfInputError:
+            # The player closed the session. Stop rather than reporting a
+            # fault: there is nothing wrong, there is just nobody there.
+            self.running = False
+            return
+
+        if parse_buffer:
+            self._parse(typed, parse_buffer)
 
     # -- Printing ------------------------------------------------------
 
@@ -245,6 +342,12 @@ class Interpreter:
 
     def _op_new_line(self, _instruction: Instruction) -> None:
         self.streams.write("\n")
+
+    def _op_print_ret(self, instruction: Instruction) -> None:
+        """§ 15: print the inline text, then a new-line, then return true."""
+        self._op_print(instruction)
+        self.streams.write("\n")
+        self.state.return_value(1)
 
     def _op_print_num(self, instruction: Instruction) -> None:
         """§ 2.2.1: printing numbers is signed."""
@@ -265,6 +368,46 @@ class Interpreter:
         self.running = False
 
     # -- Helpers -------------------------------------------------------
+
+    def _read_line(self, text_buffer: int) -> str:
+        """Fill the text buffer from the keyboard, returning what was typed.
+
+        § 15, read: byte 0 holds the maximum letters plus one for the zero
+        terminator; the text is reduced to lower case and stored from byte 1,
+        zero-terminated, with no carriage return code.
+        """
+
+        memory = self.state.memory
+        maximum = memory.read_byte(text_buffer) - 1
+        typed = self.keyboard.read_line(maximum).lower()
+
+        for index, character in enumerate(typed):
+            memory.write_byte(text_buffer + 1 + index, self.text.zscii_for(character))
+
+        memory.write_byte(text_buffer + 1 + len(typed), 0)
+
+        return typed
+
+    def _parse(self, typed: str, parse_buffer: int) -> None:
+        """Write the § 15 parse blocks: entry address, letters, position.
+
+        Byte 0 holds the most words the buffer can take; the count goes in
+        byte 1 and each word gets a 4-byte block. Position counts from
+        byte 1 of the text buffer, where the typed text begins.
+        """
+
+        memory = self.state.memory
+        maximum = memory.read_byte(parse_buffer)
+        tokens = tokenize(typed, self.dictionary.separators)[:maximum]
+
+        memory.write_byte(parse_buffer + 1, len(tokens))
+
+        for index, (word, position) in enumerate(tokens):
+            block = parse_buffer + 2 + 4 * index
+
+            memory.write_word(block, self.dictionary.lookup(word))
+            memory.write_byte(block + 2, len(word))
+            memory.write_byte(block + 3, position + 1)
 
     def _adjust(self, number: int, delta: int) -> int:
         """Add `delta` to a variable in place, signed (§ 15, inc and kin).

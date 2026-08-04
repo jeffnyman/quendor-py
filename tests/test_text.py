@@ -269,6 +269,49 @@ def test_zscii_for_answers_zero_for_the_uncodable(
     assert_that(codec.zscii_for("€")).is_equal_to(0)
 
 
+def test_encode_word_matches_its_decoding(
+    story_data: Callable[..., bytes],
+) -> None:
+    codec = make_codec(story_data)
+
+    assert_that(codec.encode_word("hello")).is_equal_to(pack([13, 10, 17, 17, 20]))
+
+
+def test_encode_word_truncates_at_the_resolution(
+    story_data: Callable[..., bytes],
+) -> None:
+    # The famous V3 six-character horizon: "mailboxes" is "mailbo".
+    codec = make_codec(story_data)
+
+    assert_that(codec.encode_word("mailboxes")).is_equal_to(codec.encode_word("mailbo"))
+
+
+def test_encode_word_shifts_into_a2(story_data: Callable[..., bytes]) -> None:
+    codec = make_codec(story_data)
+
+    assert_that(codec.encode_word("1")).is_equal_to(pack([5, 9, 5, 5, 5, 5]))
+
+
+def test_encode_word_escapes_the_alphabetless(
+    story_data: Callable[..., bytes],
+) -> None:
+    # e-acute is ZSCII 170: shift, escape, then the code in two five-bit
+    # halves (§ 3.4).
+    codec = make_codec(story_data)
+
+    assert_that(codec.encode_word("é")).is_equal_to(pack([5, 6, 5, 10, 5, 5]))
+
+
+def test_encode_word_uses_nine_zchars_from_v4(
+    story_data: Callable[..., bytes],
+) -> None:
+    codec = make_codec(story_data, version=4)
+    encoded = codec.encode_word("processing")
+
+    assert_that(encoded).is_length(6)
+    assert_that(encoded).is_equal_to(pack([21, 23, 20, 8, 10, 24, 24, 14, 19]))
+
+
 def test_read_zchars_can_be_capped(story_data: Callable[..., bytes]) -> None:
     # White-box on purpose: the public consumer of `max_bytes` is the
     # dictionary (§ 3.7), which does not exist yet. Two words, no end bit.

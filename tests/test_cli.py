@@ -8,12 +8,14 @@ import pytest
 from assertpy import assert_that
 
 from quendor.cli import (
+    StandardInputKeyboard,
     first_instruction_address,
     format_operand,
     format_string,
     format_variable,
     main,
 )
+from quendor.zmachine.errors import EndOfInputError
 from quendor.zmachine.instructions import Operand, OperandType
 from quendor.zmachine.interpreter import Interpreter
 from quendor.zmachine.story import Story
@@ -329,6 +331,20 @@ def test_disassembly_start_address_is_hex(
 
     assert_that(out).contains("$00504")
     assert_that(out).does_not_contain("ADD")
+
+
+def test_standard_input_keyboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda: "Hello World")
+
+    assert_that(StandardInputKeyboard().read_line(5)).is_equal_to("Hello")
+
+    def closed() -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", closed)
+
+    with pytest.raises(EndOfInputError):
+        StandardInputKeyboard().read_line(5)
 
 
 def test_running_a_story_reports_the_frontier(

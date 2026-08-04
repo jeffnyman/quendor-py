@@ -6,9 +6,14 @@ from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path
 
-from quendor.zmachine.errors import QuendorError, UnimplementedOpcodeError
+from quendor.zmachine.errors import (
+    EndOfInputError,
+    QuendorError,
+    UnimplementedOpcodeError,
+)
 from quendor.zmachine.flags import describe_flags_1, describe_flags_2
 from quendor.zmachine.header import Header
+from quendor.zmachine.input import Keyboard
 from quendor.zmachine.instructions import Decoder, Instruction, Operand, OperandType
 from quendor.zmachine.interpreter import Interpreter
 from quendor.zmachine.output import Screen
@@ -31,6 +36,19 @@ class StandardOutputScreen(Screen):
     def write(self, text: str) -> None:
         """Print as-is: the text carries its own newlines."""
         print(text, end="")
+
+
+class StandardInputKeyboard:
+    """The simplest possible `Keyboard`: lines from stdin."""
+
+    def read_line(self, maximum: int) -> str:
+        """Read one line; end of input means the player has left."""
+
+        try:
+            return input()[:maximum]
+        except EOFError as error:
+            message = "standard input is closed"
+            raise EndOfInputError(message) from error
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -109,7 +127,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def play(story: Story) -> int:
     """Run a story file."""
 
-    return _play(story, StandardOutputScreen())
+    return _play(story, StandardOutputScreen(), StandardInputKeyboard())
 
 
 def display_header(story: Story, path: Path) -> str:
@@ -359,8 +377,8 @@ def _execution_section(header: Header) -> list[str]:
     return lines
 
 
-def _play(story: Story, screen: Screen) -> int:
-    machine = Interpreter(story, screen)
+def _play(story: Story, screen: Screen, keyboard: Keyboard) -> int:
+    machine = Interpreter(story, screen, keyboard)
 
     try:
         machine.run()
