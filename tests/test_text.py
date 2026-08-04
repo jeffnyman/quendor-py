@@ -239,6 +239,36 @@ def test_custom_unicode_table_replaces_the_default(
     assert_that(codec.decode_bytes(pack([5, 6, 4, 28]))).is_equal_to("")
 
 
+def test_decode_reads_from_an_address(story_data: Callable[..., bytes]) -> None:
+    codec = make_codec(
+        story_data,
+        patches={SCRATCH: pack([13, 10, 17, 17, 20])},
+    )
+
+    assert_that(codec.decode(SCRATCH)).is_equal_to("hello")
+    assert_that(codec.decode_with_length(SCRATCH)).is_equal_to(("hello", 4))
+
+
+def test_zscii_for_covers_the_keyboard(story_data: Callable[..., bytes]) -> None:
+    codec = make_codec(story_data)
+
+    assert_that(codec.zscii_for("a")).is_equal_to(97)
+    assert_that(codec.zscii_for("\n")).is_equal_to(13)
+    assert_that(codec.zscii_for("ä")).is_equal_to(155)
+
+
+def test_zscii_for_answers_zero_for_the_uncodable(
+    story_data: Callable[..., bytes],
+) -> None:
+    codec = make_codec(story_data)
+
+    # Multi-character sequences (arrow-key escapes), nothing at all, and
+    # characters outside the translation table all have no code (§ 3.8).
+    assert_that(codec.zscii_for("abc")).is_equal_to(0)
+    assert_that(codec.zscii_for("")).is_equal_to(0)
+    assert_that(codec.zscii_for("€")).is_equal_to(0)
+
+
 def test_read_zchars_can_be_capped(story_data: Callable[..., bytes]) -> None:
     # White-box on purpose: the public consumer of `max_bytes` is the
     # dictionary (§ 3.7), which does not exist yet. Two words, no end bit.

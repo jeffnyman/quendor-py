@@ -366,6 +366,26 @@ def test_running_a_story_reports_unimplemented_opcodes(
     assert_that(capsys.readouterr().err).contains("define `Interpreter._op_rtrue`")
 
 
+def test_a_story_plays_through_to_the_end(
+    story_data: Callable[..., bytes],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The first complete playthrough: print "hi", then quit. Exit code 0
+    # and the story's own words on stdout.
+    data = bytearray(story_data(V3))
+    data[0x0500:0x0504] = bytes([0x8D, 0x01, 0x80, 0xBA])  # print_paddr; quit
+    data[0x0300:0x0302] = bytes([0xB5, 0xC5])  # "hi", packed at $0180
+
+    path = tmp_path / "story.z3"
+    path.write_bytes(bytes(data))
+
+    exit_code = main([str(path)])
+
+    assert_that(exit_code).is_equal_to(0)
+    assert_that(capsys.readouterr().out).contains("hi")
+
+
 def test_running_a_story_that_stops_exits_cleanly(
     story_data: Callable[..., bytes],
     tmp_path: Path,
